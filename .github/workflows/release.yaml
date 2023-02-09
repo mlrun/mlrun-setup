@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  release:
+    types:
+      - created
+
+jobs:
+
+  release:
+    if: github.repository == 'mlrun/mlrun-setup'
+    permissions:
+      contents: write  # for softprops/action-gh-release to create GitHub release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ amd64 ]
+        os: [ linux ]
+
+    steps:
+
+      - name: Dump github context
+        run: echo "$GITHUB_CONTEXT"
+        env:
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+
+      - name: Dump runner context
+        run: echo "$RUNNER_CONTEXT"
+        env:
+          RUNNER_CONTEXT: ${{ toJson(runner) }}
+
+      - name: Dump github ref
+        run: echo "$GITHUB_REF"
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Extract ref info
+        run: |
+          echo "REF_BRANCH=$(echo ${GITHUB_REF#refs/heads/} | tr / -)" | tee -a $GITHUB_ENV
+          echo "REF_TAG=$(echo ${GITHUB_REF#refs/tags/} | tr / -)" | tee -a $GITHUB_ENV
+
+      - name: Set MLRUNSETUP_TAG to release tag
+        if: github.event_name == 'release'
+        run: |
+          echo "MLRUNSETUP_TAG=${{ env.REF_TAG }}" >> $GITHUB_ENV
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+
+      - run: pip install -r requirements.txt
+      - run: pyinstaller -F mlsetup.py
+
+
+      - name: get datat
+        run: cp  dist/mlsetup  mlsetup-${{matrix.os}}-${{ matrix.arch }}
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: mlsetup-${{matrix.os}}-${{ matrix.arch }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
