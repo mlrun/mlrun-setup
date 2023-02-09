@@ -56,11 +56,15 @@ jobs:
       - name: get datat
         run: cp  dist/mlsetup  mlsetup-${{matrix.os}}-${{ matrix.arch }}
 
+
+      - run: |
+          echo $(sha256sum mlsetup-${{matrix.os}}-${{ matrix.arch }} | awk '{ print $1 }') >> sha256sum-linux-amd64.txt
+
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: mlsetup-${{matrix.os}}-${{ matrix.arch }}
+          files: mlsetup-${{matrix.os}}-${{ matrix.arch }},sha256sum-linux-amd64.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
