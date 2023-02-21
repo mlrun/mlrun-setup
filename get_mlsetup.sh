@@ -258,8 +258,8 @@ verify_binary() {
 
 # --- setup permissions and move binary to system directory ---
 setup_binary() {
-    chmod 755 ${TMP_BIN}
     info "Installing mlsetup to ${BIN_DIR}/mlsetup"
+    $SUDO  chmod 755 ${TMP_BIN}/mlsetup
     $SUDO chown root:root ${TMP_BIN}
     $SUDO mv -f ${TMP_BIN} ${BIN_DIR}/mlsetup
 }
