@@ -102,7 +102,9 @@ setup_env() {
 
 
     # --- get hash of config & exec for currently installed mlsetup ---
-    PRE_INSTALL_HASHES=$(get_installed_hashes)
+    if  [ -x "$(command -v sha256sum)" ]; then
+      PRE_INSTALL_HASHES=$(get_installed_hashes)
+    fi
 
     # --- if bin directory is read only skip download ---
     if [ "${INSTALL_MCONF_BIN_DIR_READ_ONLY}" = true ]; then
@@ -278,13 +280,17 @@ download_and_verify() {
     get_release_version
     download_hash
 
-    if installed_hash_matches; then
-        info 'Skipping binary downloaded, installed mlsetup matches hash'
-        return
+    if  [ -x "$(command -v sha256sum)" ]; then
+      if installed_hash_matches; then
+          info 'Skipping binary downloaded, installed mlsetup matches hash'
+          return
+      fi
     fi
 
     download_binary
-    verify_binary
+    if  [ -x "$(command -v sha256sum)" ]; then
+      verify_binary
+    fi
     setup_binary
 }
 
