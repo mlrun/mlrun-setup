@@ -3,9 +3,12 @@
 Utility for installing MLRun service locally or over Kubernetes
 
 This utility can be executed from Python or use one of the packaged binaries (one per OS) in the releases tab
+
+to download the binary to your system (on Linux or MacOS):
+
+    curl -sfL https://get.mymlrun.org | bash -
  
- 
- to build the binary run: 
+to build the binary run: 
  
     pyinstaller -F mlsetup.py
 
