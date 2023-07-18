@@ -281,8 +281,14 @@ def local(
 
 
 @main.command()
-@click.option("--jupyter", "-j", is_flag=False, flag_value=".", default="",
-              help="deploy Jupyter container, can provide jupyter image as argument")
+@click.option(
+    "--jupyter",
+    "-j",
+    is_flag=False,
+    flag_value=".",
+    default="",
+    help="deploy Jupyter container, can provide jupyter image as argument",
+)
 @click.option(
     "--data-volume", "-d", help="host path prefix to the location of db and artifacts"
 )
@@ -365,7 +371,14 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "-o",
     default=[],
     multiple=True,
-    help=f"optional services to enable/disable (end with '-' to disable), supported services: {','.join(optional_services)}",
+    help=f"optional services to enable, supported services: {','.join(optional_services)}",
+)
+@click.option(
+    "--disable",
+    "-d",
+    default=[],
+    multiple=True,
+    help=f"optional services to disable, supported services: {','.join(optional_services)}",
 )
 @click.option(
     "--set",
@@ -389,6 +402,7 @@ def kubernetes(
     namespace,
     registry_args,
     options,
+    disable,
     settings,
     external_addr,
     tag,
@@ -411,6 +425,7 @@ def kubernetes(
         tag,
         settings,
         options,
+        disable,
         chart_ver,
     )
 
@@ -864,11 +879,13 @@ class K8sConfig(BaseConfig):
         tag=None,
         settings=None,
         options=None,
+        disable=None,
         chart_ver=None,
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
-        service_options = self.parse_services(options)
+        service_options = self.parse_services(options, enable="true")
+        service_disable = self.parse_services(disable, enable="false")
         tag = tag or get_latest_mlrun_tag()
         logging.info(f"Using MLRun tag: {tag} ")
         logging.info(f"Creating kubernetes namespace {namespace}...")
@@ -965,6 +982,8 @@ class K8sConfig(BaseConfig):
                 helm_run_cmd += ["--set", setting]
         for opt in service_options:
             helm_run_cmd += ["--set", opt]
+        for opt in service_disable:
+            helm_run_cmd += ["--set", opt]
         if chart_ver:
             helm_run_cmd += ["--version", chart_ver]
 
@@ -987,14 +1006,10 @@ class K8sConfig(BaseConfig):
         self.set_env(env_settings)
 
     @staticmethod
-    def parse_services(include):
+    def parse_services(include, enable):
         extra_sets = []
         if include:
             for service in include:
-                enable = "true"
-                if service.endswith("-"):
-                    enable = "false"
-                    service = service[:-1]
                 if (
                     service not in optional_services
                     and service not in service_map.keys()
@@ -1241,15 +1256,11 @@ class K8sConfig(BaseConfig):
         while stop < len(scaled_deplyoments):
             stop = check_scale_status(i_scale)
 
-    def check_k8s_resource_exist(
-        self, resource: str, name: str, namespace: str = None
-    ):
+    def check_k8s_resource_exist(self, resource: str, name: str, namespace: str = None):
         cmd = ["kubectl", "get", resource, name]
         if namespace:
             cmd = ["kubectl", "-n", namespace, "get", resource, name]
-        returncode, out, err = self.do_popen(
-            cmd, interactive=False
-        )
+        returncode, out, err = self.do_popen(cmd, interactive=False)
         if returncode == 1:
             return False
         else:
@@ -1281,7 +1292,7 @@ def _list2dict(lines: list, default_key="", default_value=None):
             elif line and default_value is not None:
                 out[line] = default_value
             continue
-        key, value = line[:i].strip(), line[i + 1:].strip()
+        key, value = line[:i].strip(), line[i + 1 :].strip()
         if key is None:
             raise ValueError("cannot find key in line (key=value)")
         value = os.path.expandvars(value)
