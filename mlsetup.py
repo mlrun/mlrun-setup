@@ -397,6 +397,13 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "--simulate", is_flag=True, help="simulate install (print commands vs exec)"
 )
 @click.option("--chart-ver", help="MLRun helm chart version")
+@click.option(
+    "--jupyter",
+    "-j",
+    is_flag=False,
+    flag_value=".",
+    default="",
+    help="deploy Jupyter container, can provide jupyter image as argument")
 def kubernetes(
     name,
     namespace,
@@ -411,6 +418,7 @@ def kubernetes(
     verbose,
     simulate,
     chart_ver,
+    jupyter
 ):
     """Install MLRun service on Kubernetes"""
     config = K8sConfig(env_file, verbose, env_vars_opt=env_vars, simulate=simulate)
@@ -427,6 +435,7 @@ def kubernetes(
         options,
         disable,
         chart_ver,
+        jupyter
     )
 
 
@@ -881,6 +890,7 @@ class K8sConfig(BaseConfig):
         options=None,
         disable=None,
         chart_ver=None,
+        jupyter="",
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
@@ -973,9 +983,18 @@ class K8sConfig(BaseConfig):
             ]
         if external_addr:
             helm_run_cmd += ["--set", f"global.externalHostAddress={external_addr}"]
-        # todo: in case of jupyter image set the jupyterNotebook.image.repository & tag
+        if jupyter:
+            tag_jupyter=None
+            image_jupyter=None
+            if ":" in jupyter:
+                tag_jupyter = jupyter.split(":")[-1]
+                image_jupyter = jupyter.split(":")[0]
+            logging.info(f"Jupyter container image: {image_jupyter}:{tag_jupyter} ")
+            helm_run_cmd += ["--set", f"jupyterNotebook.image.repository={image_jupyter}"]
+            helm_run_cmd += ["--set", f'jupyterNotebook.image.tag={tag_jupyter if tag_jupyter else "latest"}']
+        images_service = ["mlrun.api", "mlrun.ui", "jupyterNotebook"] if not jupyter else ["mlrun.api", "mlrun.ui"]
         if tag:
-            for service in ["mlrun.api", "mlrun.ui", "jupyterNotebook"]:
+            for service in images_service:
                 helm_run_cmd += ["--set", f"{service}.image.tag={tag}"]
         if settings:
             for setting in settings:
