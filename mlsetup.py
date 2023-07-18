@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import json
+import logging
 import os
 import re
 import shutil
@@ -11,12 +12,23 @@ import urllib.request
 import click
 import dotenv
 
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 is_dummy_mode = os.environ.get("DUMMY_MODE", "")
 default_env_file = "~/.mlrun.env"
+scaled_deplyoments = [
+    "mlrun-api-chief",
+    "mlrun-db",
+    "mlrun-jupyter",
+    "mlrun-ui",
+    "mpi-operator",
+    "nuclio-controller",
+    "nuclio-dashboard",
+]
 valid_registry_args = [
     "kind",
     "server",
     "username",
+    "password",
     "email",
     "url",
     "secret",
@@ -112,10 +124,10 @@ def start(
         dbpath = current_env_vars.get("MLRUN_DBPATH") or os.environ.get(
             "MLRUN_DBPATH", ""
         )
-        print(f"detected settings of remote MLRun service at {dbpath}")
+        logging.info(f"detected settings of remote MLRun service at {dbpath}")
         return
 
-    print(extra_args)
+    logging.info(extra_args)
     config = K8sConfig.from_config(config)
     if config.is_supported():
         config.start(tag=tag, **extra_args)
@@ -144,15 +156,84 @@ def start(
 @click.option("--force", "-f", is_flag=True, help="force stop")
 @click.option("--verbose", "-v", is_flag=True, help="verbose log")
 def stop(env_file, deployment, cleanup, force, verbose):
-    """Stop MLRun service which was started using the start command"""
+    """Stop MLRun service which was started using this CLI"""
     deployment = deployment or BaseConfig(env_file).get_env().get(
         "MLRUN_CONF_LAST_DEPLOYMENT", ""
     )
     if not deployment:
-        print("cennot determine current deployment type, please specify the -d option")
+        logging.error(
+            "cannot determine current deployment type, please specify the -d option"
+        )
         return
     config = deployment_modes[deployment](env_file, verbose)
     config.stop(force, cleanup)
+
+
+@main.command()
+@env_file_opt
+@click.option(
+    "--deployment", "-d", help="deployment mode: local | docker | kuberenetes"
+)
+@click.option("--force", "-f", is_flag=True, help="force stop")
+@click.option("--verbose", "-v", is_flag=True, help="verbose log")
+def uninstall(env_file, deployment, force, verbose):
+    """Uninstall and cleanup MLRun service which was started using this CLI"""
+    deployment = deployment or BaseConfig(env_file).get_env().get(
+        "MLRUN_CONF_LAST_DEPLOYMENT", ""
+    )
+    if not deployment:
+        logging.error(
+            "cannot determine current deployment type, please specify the -d option"
+        )
+        return
+    config = deployment_modes[deployment](env_file, verbose)
+    config.stop(force, True)
+
+
+@main.command()
+@env_file_opt
+@click.option(
+    "--deployment", "-d", help="deployment mode: local | docker | kuberenetes"
+)
+def pause(env_file, deployment):
+    """Scale MLRun deployments to zero
+    Plese note -
+    if you want to keep your notebooks between deployments scale save your notebooks in the data folder
+    """
+    deployment = deployment or BaseConfig(env_file).get_env().get(
+        "MLRUN_CONF_LAST_DEPLOYMENT", ""
+    )
+    if not deployment:
+        print("cannot determine current deployment type, please specify the -d option")
+        return
+    config = deployment_modes[deployment](env_file)
+    config.pause()
+
+
+@main.command()
+@env_file_opt
+@click.option(
+    "--services",
+    "-s",
+    default=[],
+    multiple=True,
+    help="scale specific services, e.g. -s mlrun-jupyter=0"
+    f", supported services: {','.join(scaled_deplyoments)}",
+)
+@click.option(
+    "--deployment", "-d", help="deployment mode: local | docker | kuberenetes"
+)
+def scale(env_file, services, deployment):
+    """Scale up MLRun deployments"""
+    deployment = deployment or BaseConfig(env_file).get_env().get(
+        "MLRUN_CONF_LAST_DEPLOYMENT", ""
+    )
+    if not deployment:
+        print("cannot determine current deployment type, please specify the -d option")
+        return
+    config = deployment_modes[deployment](env_file)
+    services = _list2dict(services, default_value="1")
+    config.scale(services)
 
 
 @main.command()
@@ -200,7 +281,8 @@ def local(
 
 
 @main.command()
-@click.option("--jupyter", "-j", is_flag=True, help="deploy Jupyter container")
+@click.option("--jupyter", "-j", is_flag=False, flag_value=".", default="",
+              help="deploy Jupyter container, can provide jupyter image as argument")
 @click.option(
     "--data-volume", "-d", help="host path prefix to the location of db and artifacts"
 )
@@ -283,7 +365,7 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "-o",
     default=[],
     multiple=True,
-    help=f"optional services to enable (end with '-' to disable), supported services: {','.join(optional_services)}",
+    help=f"optional services to enable/disable (end with '-' to disable), supported services: {','.join(optional_services)}",
 )
 @click.option(
     "--set",
@@ -440,16 +522,19 @@ class BaseConfig:
         else:
             print(f".env file {self.filename} not found")
 
-    def do_popen(self, cmd, env=None, interactive=True):
+    def do_popen(self, cmd, env=None, interactive=True, stdin=None):
         if self.simulate:
             print(f"DUMMY: {' '.join(cmd)}")
             return 0, "", ""
 
         output = None if interactive else subprocess.PIPE
+        stdin = None if not stdin else stdin
         if self.verbose:
             print(cmd)
         try:
-            child = subprocess.Popen(cmd, env=env, stdout=output, stderr=output)
+            child = subprocess.Popen(
+                cmd, env=env, stdin=stdin, stdout=output, stderr=output
+            )
         except FileNotFoundError as exc:
             if interactive or self.verbose:
                 print(str(exc))
@@ -469,6 +554,12 @@ class BaseConfig:
         pass
 
     def stop(self, force=None, cleanup=None):
+        pass
+
+    def pause(self, **kwargs):
+        pass
+
+    def scale(self, services: dict = None):
         pass
 
     def is_supported(self, print_error=False):
@@ -649,6 +740,21 @@ class DockerConfig(BaseConfig):
                 print(f"Error making volume {data_volume}, {exc}")
 
         tag = tag or get_latest_mlrun_tag()
+        compose_file = compose_file or "compose.yaml"
+        cmd = ["docker-compose", "-f", compose_file, "up"]
+        if not foreground:
+            cmd += ["-d"]
+
+        compose_body = compose_template + mlrun_api_template
+        jupyter_image = ""
+        if jupyter:
+            compose_body += jupyter_template
+            jupyter_image = f"mlrun/jupyter:{tag}" if jupyter == "." else jupyter
+            logging.info(f"Jupyter container image: {jupyter_image} ")
+        compose_body += suffix_template
+        with open(compose_file, "w") as fp:
+            fp.write(compose_body)
+
         env = os.environ.copy()
         for key, val in {
             "HOST_IP": _get_ip(),
@@ -656,22 +762,11 @@ class DockerConfig(BaseConfig):
             "VOLUME_MOUNT": volume_mount,  # mounted dir
             "MLRUN_PORT": str(port),
             "TAG": tag,
+            "JUPYTER_IMAGE": jupyter_image,
         }.items():
             print(f"{key}={val}")
             if val is not None:
                 env[key] = val
-
-        compose_file = compose_file or "compose.yaml"
-        cmd = ["docker-compose", "-f", compose_file, "up"]
-        if not foreground:
-            cmd += ["-d"]
-
-        compose_body = compose_template + mlrun_api_template
-        if jupyter:
-            compose_body += jupyter_template
-        compose_body += suffix_template
-        with open(compose_file, "w") as fp:
-            fp.write(compose_body)
 
         path_map = None
         if volume_mount != docker_volume_mount:
@@ -741,23 +836,23 @@ class K8sConfig(BaseConfig):
     def is_supported(self, print_error=False):
         if shutil.which("kubectl") is None:
             if print_error or self.verbose:
-                print(
+                logging.error(
                     "Error, kubectl was not found, "
                     "please make sure Kubernetes is installed and configured"
                 )
             return False
         if shutil.which("helm") is None:
             if print_error or self.verbose:
-                print(
+                logging.error(
                     "Error, helm was not found, please make sure helm is installed"
                     " see: https://helm.sh/docs/intro/install/"
                 )
             return False
         kubectl_runs = self.do_popen(["kubectl", "version"])[0] == 0
         if not kubectl_runs and (print_error or self.verbose):
-            print("Kubernetes cli (kubectl) is not accessible")
+            logging.error("Kubernetes cli (kubectl) is not accessible")
         if self.verbose and kubectl_runs:
-            print("Kubernetes (kubectl) support was detected")
+            logging.error("Kubernetes (kubectl) support was detected")
         return kubectl_runs
 
     def start(
@@ -772,17 +867,38 @@ class K8sConfig(BaseConfig):
         chart_ver=None,
         **kwargs,
     ):
+        logging.info("Start installing MLRun CE")
         service_options = self.parse_services(options)
         tag = tag or get_latest_mlrun_tag()
-        print(f"\nCreating kubernetes namespace {namespace}...")
-        returncode, out, err = self.do_popen(
-            ["kubectl", "create", "namespace", namespace], interactive=False
-        )
-        if returncode != 0:
-            # err = child.stderr.read().decode("utf-8")
-            if "AlreadyExists" not in err:
-                print(err)
-                raise SystemExit(returncode)
+        logging.info(f"Using MLRun tag: {tag} ")
+        logging.info(f"Creating kubernetes namespace {namespace}...")
+        create_namespace = True
+        if self.check_k8s_resource_exist("namespace", namespace):
+            logging.warning(f"Namespace {namespace} already exists")
+            text = click.prompt(
+                "To overwrite the existing namespace press y or Y",
+                type=str,
+                default="n",
+            )
+            text = text.lower()
+            if "y" in text:
+                returncode, out, err = self.do_popen(
+                    ["kubectl", "delete", "namespace", namespace], interactive=False
+                )
+                if returncode != 0:
+                    logging.error(err)
+                    raise SystemExit(returncode)
+            else:
+                create_namespace = False
+        if create_namespace:
+            returncode, out, err = self.do_popen(
+                ["kubectl", "create", "namespace", namespace], interactive=True
+            )
+            if returncode != 0:
+                # err = child.stderr.read().decode("utf-8")
+                if "AlreadyExists" not in err:
+                    logging.error(err)
+                    raise SystemExit(returncode)
         env_settings = {
             "MLRUN_MOCK_NUCLIO_DEPLOYMENT": "",
             "MLRUN_CONF_LAST_DEPLOYMENT": "kubernetes",
@@ -799,7 +915,7 @@ class K8sConfig(BaseConfig):
             ["helm", "repo", "update"],
         ]
 
-        print("\nInstalling and updating mlrun helm repo")
+        logging.info("Installing and updating mlrun helm repo")
         for command in helm_commands:
             returncode, _, _ = self.do_popen(command)
             if returncode != 0:
@@ -840,6 +956,7 @@ class K8sConfig(BaseConfig):
             ]
         if external_addr:
             helm_run_cmd += ["--set", f"global.externalHostAddress={external_addr}"]
+        # todo: in case of jupyter image set the jupyterNotebook.image.repository & tag
         if tag:
             for service in ["mlrun.api", "mlrun.ui", "jupyterNotebook"]:
                 helm_run_cmd += ["--set", f"{service}.image.tag={tag}"]
@@ -855,7 +972,7 @@ class K8sConfig(BaseConfig):
             helm_run_cmd += ["--debug"]
         helm_run_cmd += ["mlrun-ce/mlrun-ce"]
 
-        print("\nRunning helm install...")
+        logging.info("Running helm install...")
         returncode, _, _ = self.do_popen(helm_run_cmd)
         if returncode != 0:
             raise SystemExit(returncode)
@@ -893,7 +1010,7 @@ class K8sConfig(BaseConfig):
         # del registry secret before create
         # returns url, secret, push_secret, new_settings
         if not registry_args and "DOCKER_USERNAME" not in os.environ:
-            print(
+            logging.info(
                 "please select the container registry kind, Local, docker "
                 "(for docker hub), or args e.g. url=<registry-url>"
             )
@@ -920,7 +1037,7 @@ class K8sConfig(BaseConfig):
         if kind == "local":
             # use local docker registry, create it if needed
             if not url:
-                print("Starting local docker registry...")
+                logging.info("Starting local docker registry...")
                 cmd = "docker run -d -p 5000:5000 --name docker-registry registry:2.7".split()
                 returncode, _, _ = self.do_popen(cmd)
                 if returncode != 0:
@@ -981,20 +1098,66 @@ class K8sConfig(BaseConfig):
             registry_email,
         ]
         new_settings["REGISTRY_SECRET"] = pull_secret
-
-        print(f"Creating docker registry secret {namespace}/{pull_secret}")
-        returncode, _, _ = self.do_popen(docker_secret_cmd)
-        if returncode != 0:
-            print("Failed to create secret !")
-            raise SystemExit(returncode)
+        create_secret = True
+        if self.check_k8s_resource_exist(
+            namespace=namespace, resource="secret", name=pull_secret
+        ):
+            logging.warning(f"Registry Secret {pull_secret} already exists")
+            text = click.prompt(
+                "To overwrite the existing Registry Secret press y or Y",
+                type=str,
+                default="n",
+            )
+            text = text.lower()
+            if "y" in text:
+                returncode, _, _ = self.do_popen(
+                    ["kubectl", "-n", namespace, "delete", "secret", pull_secret]
+                )
+                if returncode != 0:
+                    raise SystemExit(returncode)
+            else:
+                create_secret = False
+        if create_secret:
+            returncode, _, _ = self.do_popen(docker_secret_cmd)
+            if returncode != 0:
+                logging.error("Failed to create secret !")
+                raise SystemExit(returncode)
 
         return url, pull_secret, push_secret, new_settings
+
+    def pause(self):
+        env = self.get_env()
+        namespace = env.get("MLRUN_CONF_K8S_NAMESPACE", "")
+        cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
+        for deployment in scaled_deplyoments:
+            cmd.append(deployment)
+        cmd.append("--replicas=0")
+        returncode, _, _ = self.do_popen(cmd)
+        if returncode != 0:
+            raise SystemExit(returncode)
+        self.check_scale(method="pause", namespace=namespace)
+        logging.info(f'{",".join(scaled_deplyoments)} are scaled to zero')
+
+    def scale(self, services: dict = None):
+        # todo: use num of replicas from deployments
+        env = self.get_env()
+        namespace = env.get("MLRUN_CONF_K8S_NAMESPACE", "")
+        cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
+        deployments = services.keys() if services else scaled_deplyoments
+        for deployment in deployments:
+            cmd.append(deployment)
+        cmd.append(f"--replicas={services.get(deployment, '1')}")
+        returncode, _, _ = self.do_popen(cmd)
+        if returncode != 0:
+            raise SystemExit(returncode)
+        self.check_scale(method="scale", namespace=namespace)
+        logging.info(f'scaled {",".join(deployments)}')
 
     def stop(self, force=None, cleanup=None):
         env = self.get_env()
         stage = int(env.get("MLRUN_CONF_K8S_STAGE", "0"))
         if not stage:
-            print("mlrun kubernetes installation was not detected")
+            logging.error("mlrun kubernetes installation was not detected")
             return
 
         delete_keys = []  # add additional keys to delete per uninstall section
@@ -1048,6 +1211,50 @@ class K8sConfig(BaseConfig):
 
         self.clear_env(cleanup, delete_keys=delete_keys)
 
+    def check_scale(self, method, namespce):
+        i_scale = "1" if method == "scale" else "0"
+
+        def check_scale_status(i_scale):
+            cmd = ["kubectl", "-n", namespce, "get", "deployments.apps"]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(
+                cmd, interactive=False
+            )
+            cmd = ["awk", "{print $4}"]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(
+                cmd, stdin=out, interactive=False
+            )
+            cmd = ["tail", "-n", "+2"]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(
+                cmd, stdin=out, interactive=False
+            )
+            cmd = ["grep", i_scale]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(
+                cmd, stdin=out, interactive=False
+            )
+            cmd = ["wc", "-l"]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(
+                cmd, stdin=out, interactive=False
+            )
+            return int(out)
+
+        stop = check_scale_status(i_scale)
+        while stop < len(scaled_deplyoments):
+            stop = check_scale_status(i_scale)
+
+    def check_k8s_resource_exist(
+        self, resource: str, name: str, namespace: str = None
+    ):
+        cmd = ["kubectl", "get", resource, name]
+        if namespace:
+            cmd = ["kubectl", "-n", namespace, "get", resource, name]
+        returncode, out, err = self.do_popen(
+            cmd, interactive=False
+        )
+        if returncode == 1:
+            return False
+        else:
+            return True
+
 
 def _get_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1063,15 +1270,18 @@ def _get_ip():
     return IP
 
 
-def _list2dict(lines: list, default_key=""):
+def _list2dict(lines: list, default_key="", default_value=None):
     out = {}
     for line in lines:
         i = line.find("=")
         if i == -1:
+            line = line.strip()
             if line and default_key:
-                out[default_key] = line.strip()
+                out[default_key] = line
+            elif line and default_value is not None:
+                out[line] = default_value
             continue
-        key, value = line[:i].strip(), line[i + 1 :].strip()
+        key, value = line[:i].strip(), line[i + 1:].strip()
         if key is None:
             raise ValueError("cannot find key in line (key=value)")
         value = os.path.expandvars(value)
@@ -1195,7 +1405,7 @@ mlrun_api_template = """
 
 jupyter_template = """
   jupyter:
-    image: "mlrun/jupyter:${TAG:-1.2.1}"
+    image: "{JUPYTER_IMAGE}"
     command:
       - start-notebook.sh
       - "--ip='0.0.0.0'"
