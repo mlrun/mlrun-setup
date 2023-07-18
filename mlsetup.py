@@ -218,7 +218,7 @@ def pause(env_file, deployment):
     default=[],
     multiple=True,
     help="scale specific services, e.g. -s mlrun-jupyter=0"
-    f", supported services: {','.join(scaled_deplyoments)}",
+    f", supported services: {','.join(scaled_deplyoments)}.",
 )
 @click.option(
     "--deployment", "-d", help="deployment mode: local | docker | kuberenetes"
@@ -1151,22 +1151,24 @@ class K8sConfig(BaseConfig):
         if returncode != 0:
             raise SystemExit(returncode)
         self.check_scale(method="pause", namespace=namespace)
-        logging.info(f'{",".join(scaled_deplyoments)} are scaled to zero')
+        logging.info(f"All Deployments are Scaled to zero")
 
     def scale(self, services: dict = None):
-        # todo: use num of replicas from deployments
+        print(1)
         env = self.get_env()
         namespace = env.get("MLRUN_CONF_K8S_NAMESPACE", "")
         cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
         deployments = services.keys() if services else scaled_deplyoments
         for deployment in deployments:
             cmd.append(deployment)
-        cmd.append(f"--replicas={services.get(deployment, '1')}")
-        returncode, _, _ = self.do_popen(cmd)
-        if returncode != 0:
-            raise SystemExit(returncode)
+            replica_num = services.get(deployment, "1")
+            cmd.append(f"--replicas={replica_num}")
+            returncode, _, _ = self.do_popen(cmd)
+            if returncode != 0:
+                raise SystemExit(returncode)
+            cmd = cmd[:5]
         self.check_scale(method="scale", namespace=namespace)
-        logging.info(f'scaled {",".join(deployments)}')
+        logging.info(f'scaled {",".join(scaled_deplyoments)}')
 
     def stop(self, force=None, cleanup=None):
         env = self.get_env()
@@ -1226,33 +1228,58 @@ class K8sConfig(BaseConfig):
 
         self.clear_env(cleanup, delete_keys=delete_keys)
 
-    def check_scale(self, method, namespce):
+    def check_scale(self, method, namespace, services=None):
         i_scale = "1" if method == "scale" else "0"
-
-        def check_scale_status(i_scale):
-            cmd = ["kubectl", "-n", namespce, "get", "deployments.apps"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, interactive=False
+        # todo: support check scale for more then one replica
+        def check_scale_status(i_scale, namespace):
+            cmd = ["kubectl", "-n", namespace, "get", "deployments.apps"]
+            if self.simulate:
+                print(f"DUMMY: {' '.join(cmd)}")
+                return 0, "", ""
+            if self.verbose:
+                print(cmd)
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["awk", "{print $4}"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["tail", "-n", "+2"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["grep", i_scale]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["wc", "-l"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-            return int(out)
+            return int(child.stdout.read().decode("utf-8"))
 
-        stop = check_scale_status(i_scale)
+        stop = check_scale_status(i_scale, namespace)
         while stop < len(scaled_deplyoments):
             stop = check_scale_status(i_scale)
 
