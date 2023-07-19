@@ -9,6 +9,7 @@ import subprocess
 import sys
 import urllib.request
 from typing import List
+import json
 
 import click
 import dotenv
@@ -782,6 +783,7 @@ class DockerConfig(BaseConfig):
             fp.write(compose_body)
 
         env = os.environ.copy()
+        conf_env = {}
         for key, val in {
             "HOST_IP": _get_ip(),
             "SHARED_DIR": _docker_path(data_volume),  # host dir
@@ -793,7 +795,7 @@ class DockerConfig(BaseConfig):
             print(f"{key}={val}")
             if val is not None:
                 env[key] = val
-                self.set_env({key: val})
+                conf_env[key] = val
 
         path_map = None
         if volume_mount != docker_volume_mount:
@@ -804,6 +806,7 @@ class DockerConfig(BaseConfig):
                 "MLRUN_MOCK_NUCLIO_DEPLOYMENT": "",
                 "MLRUN_CONF_LAST_DEPLOYMENT": "docker",
                 "MLRUN_CONF_COMPOSE_PATH": os.path.realpath(compose_file),
+                "MLRUN_CONF_COMPOSE_ENV": json.dumps(conf_env),
                 "MLRUN_STORAGE__ITEM_TO_REAL_PATH": path_map,
             },
         )
@@ -825,11 +828,11 @@ class DockerConfig(BaseConfig):
             print("Jupyter address:   http://localhost:8888")
 
     def stop(self, force=None, cleanup=None):
+        compose_file = self.get_env().get("MLRUN_CONF_COMPOSE_PATH", "")
+        compose_env = self.get_env().get("MLRUN_CONF_COMPOSE_ENV", "{}")
         env = os.environ.copy()
-        for k, v in self.get_env().items():
-            env[k] = v
-
-        compose_file = env.get("MLRUN_CONF_COMPOSE_PATH", "")
+        for key, val in json.loads(compose_env).items():
+            env[key] = val
         if compose_file:
             returncode, _, _ = self.do_popen(
                 ["docker-compose", "-f", compose_file, "down"], env=env
@@ -850,9 +853,7 @@ class DockerConfig(BaseConfig):
             print(err)
             return []
         containers = out.split()
-        if not containers:
-            return []
-        return containers
+        return containers or []
 
     def stop_nuclio_containers(self):
         containers = self.query_containers_by_filter(filters={"label":"nuclio.io/function-name"})
