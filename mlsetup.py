@@ -218,7 +218,7 @@ def pause(env_file, deployment):
     default=[],
     multiple=True,
     help="scale specific services, e.g. -s mlrun-jupyter=0"
-    f", supported services: {','.join(scaled_deplyoments)}",
+    f", supported services: {','.join(scaled_deplyoments)}.",
 )
 @click.option(
     "--deployment", "-d", help="deployment mode: local | docker | kuberenetes"
@@ -281,8 +281,14 @@ def local(
 
 
 @main.command()
-@click.option("--jupyter", "-j", is_flag=False, flag_value=".", default="",
-              help="deploy Jupyter container, can provide jupyter image as argument")
+@click.option(
+    "--jupyter",
+    "-j",
+    is_flag=False,
+    flag_value=".",
+    default="",
+    help="deploy Jupyter container, can provide jupyter image as argument",
+)
 @click.option(
     "--data-volume", "-d", help="host path prefix to the location of db and artifacts"
 )
@@ -365,7 +371,14 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "-o",
     default=[],
     multiple=True,
-    help=f"optional services to enable/disable (end with '-' to disable), supported services: {','.join(optional_services)}",
+    help=f"optional services to enable, supported services: {','.join(optional_services)}",
+)
+@click.option(
+    "--disable",
+    "-d",
+    default=[],
+    multiple=True,
+    help=f"optional services to disable, supported services: {','.join(optional_services)}",
 )
 @click.option(
     "--set",
@@ -384,11 +397,20 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "--simulate", is_flag=True, help="simulate install (print commands vs exec)"
 )
 @click.option("--chart-ver", help="MLRun helm chart version")
+@click.option(
+    "--jupyter",
+    "-j",
+    is_flag=False,
+    flag_value=".",
+    default="",
+    help="deploy Jupyter container, can provide jupyter image as argument",
+)
 def kubernetes(
     name,
     namespace,
     registry_args,
     options,
+    disable,
     settings,
     external_addr,
     tag,
@@ -397,6 +419,7 @@ def kubernetes(
     verbose,
     simulate,
     chart_ver,
+    jupyter,
 ):
     """Install MLRun service on Kubernetes"""
     config = K8sConfig(env_file, verbose, env_vars_opt=env_vars, simulate=simulate)
@@ -411,7 +434,9 @@ def kubernetes(
         tag,
         settings,
         options,
+        disable,
         chart_ver,
+        jupyter,
     )
 
 
@@ -864,11 +889,14 @@ class K8sConfig(BaseConfig):
         tag=None,
         settings=None,
         options=None,
+        disable=None,
         chart_ver=None,
+        jupyter="",
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
-        service_options = self.parse_services(options)
+        service_options = self.parse_services(options, enable="true")
+        service_options += self.parse_services(disable, enable="false")
         tag = tag or get_latest_mlrun_tag()
         logging.info(f"Using MLRun tag: {tag} ")
         logging.info(f"Creating kubernetes namespace {namespace}...")
@@ -956,9 +984,27 @@ class K8sConfig(BaseConfig):
             ]
         if external_addr:
             helm_run_cmd += ["--set", f"global.externalHostAddress={external_addr}"]
-        # todo: in case of jupyter image set the jupyterNotebook.image.repository & tag
+        if jupyter:
+            tag_jupyter = None
+            if ":" in jupyter:
+                tag_jupyter = jupyter.split(":")[-1]
+                jupyter = jupyter.split(":")[0]
+            logging.info(f'Jupyter container image: {jupyter}:{tag_jupyter or "latest"} ')
+            helm_run_cmd += [
+                "--set",
+                f"jupyterNotebook.image.repository={jupyter}",
+            ]
+            helm_run_cmd += [
+                "--set",
+                f'jupyterNotebook.image.tag={tag_jupyter if tag_jupyter else "latest"}',
+            ]
+        images_service = (
+            ["mlrun.api", "mlrun.ui", "jupyterNotebook"]
+            if not jupyter
+            else ["mlrun.api", "mlrun.ui"]
+        )
         if tag:
-            for service in ["mlrun.api", "mlrun.ui", "jupyterNotebook"]:
+            for service in images_service:
                 helm_run_cmd += ["--set", f"{service}.image.tag={tag}"]
         if settings:
             for setting in settings:
@@ -987,14 +1033,10 @@ class K8sConfig(BaseConfig):
         self.set_env(env_settings)
 
     @staticmethod
-    def parse_services(include):
+    def parse_services(include, enable):
         extra_sets = []
         if include:
             for service in include:
-                enable = "true"
-                if service.endswith("-"):
-                    enable = "false"
-                    service = service[:-1]
                 if (
                     service not in optional_services
                     and service not in service_map.keys()
@@ -1136,22 +1178,21 @@ class K8sConfig(BaseConfig):
         if returncode != 0:
             raise SystemExit(returncode)
         self.check_scale(method="pause", namespace=namespace)
-        logging.info(f'{",".join(scaled_deplyoments)} are scaled to zero')
+        logging.info(f"All Deployments are Scaled to zero")
 
     def scale(self, services: dict = None):
-        # todo: use num of replicas from deployments
         env = self.get_env()
         namespace = env.get("MLRUN_CONF_K8S_NAMESPACE", "")
-        cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
         deployments = services.keys() if services else scaled_deplyoments
         for deployment in deployments:
+            cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
             cmd.append(deployment)
-        cmd.append(f"--replicas={services.get(deployment, '1')}")
-        returncode, _, _ = self.do_popen(cmd)
-        if returncode != 0:
-            raise SystemExit(returncode)
+            replica_num = services.get(deployment, "1")
+            cmd.append(f"--replicas={replica_num}")
+            returncode, _, _ = self.do_popen(cmd)
+            if returncode != 0:
+                raise SystemExit(returncode)
         self.check_scale(method="scale", namespace=namespace)
-        logging.info(f'scaled {",".join(deployments)}')
 
     def stop(self, force=None, cleanup=None):
         env = self.get_env()
@@ -1211,45 +1252,66 @@ class K8sConfig(BaseConfig):
 
         self.clear_env(cleanup, delete_keys=delete_keys)
 
-    def check_scale(self, method, namespce):
+    def check_scale(self, method, namespace, services=None):
         i_scale = "1" if method == "scale" else "0"
-
-        def check_scale_status(i_scale):
-            cmd = ["kubectl", "-n", namespce, "get", "deployments.apps"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, interactive=False
+        # todo: support check scale for more then one replica
+        def check_scale_status(i_scale, namespace):
+            cmd = ["kubectl", "-n", namespace, "get", "deployments.apps"]
+            if self.simulate:
+                print(f"DUMMY: {' '.join(cmd)}")
+                return 0, "", ""
+            if self.verbose:
+                print(cmd)
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            cmd = ["grep", "nuclio\|mlrun\|mpi"]
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["awk", "{print $4}"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
-            )
-            cmd = ["tail", "-n", "+2"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["grep", i_scale]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             cmd = ["wc", "-l"]
-            returncode, out, err = BaseConfig(env_file="test").do_popen(
-                cmd, stdin=out, interactive=False
+            child = subprocess.Popen(
+                cmd,
+                env=None,
+                stdin=child.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
-            return int(out)
+            return int(child.stdout.read().decode("utf-8"))
 
-        stop = check_scale_status(i_scale)
+        stop = check_scale_status(i_scale, namespace)
         while stop < len(scaled_deplyoments):
-            stop = check_scale_status(i_scale)
+            stop = check_scale_status(i_scale, namespace)
 
-    def check_k8s_resource_exist(
-        self, resource: str, name: str, namespace: str = None
-    ):
+    def check_k8s_resource_exist(self, resource: str, name: str, namespace: str = None):
         cmd = ["kubectl", "get", resource, name]
         if namespace:
             cmd = ["kubectl", "-n", namespace, "get", resource, name]
-        returncode, out, err = self.do_popen(
-            cmd, interactive=False
-        )
+        returncode, out, err = self.do_popen(cmd, interactive=False)
         if returncode == 1:
             return False
         else:
@@ -1281,7 +1343,7 @@ def _list2dict(lines: list, default_key="", default_value=None):
             elif line and default_value is not None:
                 out[line] = default_value
             continue
-        key, value = line[:i].strip(), line[i + 1:].strip()
+        key, value = line[:i].strip(), line[i + 1 :].strip()
         if key is None:
             raise ValueError("cannot find key in line (key=value)")
         value = os.path.expandvars(value)
