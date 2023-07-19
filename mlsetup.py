@@ -895,7 +895,7 @@ class K8sConfig(BaseConfig):
     ):
         logging.info("Start installing MLRun CE")
         service_options = self.parse_services(options, enable="true")
-        service_disable = self.parse_services(disable, enable="false")
+        service_options += self.parse_services(disable, enable="false")
         tag = tag or get_latest_mlrun_tag()
         logging.info(f"Using MLRun tag: {tag} ")
         logging.info(f"Creating kubernetes namespace {namespace}...")
@@ -1000,8 +1000,6 @@ class K8sConfig(BaseConfig):
             for setting in settings:
                 helm_run_cmd += ["--set", setting]
         for opt in service_options:
-            helm_run_cmd += ["--set", opt]
-        for opt in service_disable:
             helm_run_cmd += ["--set", opt]
         if chart_ver:
             helm_run_cmd += ["--version", chart_ver]
@@ -1173,21 +1171,18 @@ class K8sConfig(BaseConfig):
         logging.info(f"All Deployments are Scaled to zero")
 
     def scale(self, services: dict = None):
-        print(1)
         env = self.get_env()
         namespace = env.get("MLRUN_CONF_K8S_NAMESPACE", "")
-        cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
         deployments = services.keys() if services else scaled_deplyoments
         for deployment in deployments:
+            cmd = ["kubectl", "-n", namespace, "scale", "deployments.apps"]
             cmd.append(deployment)
             replica_num = services.get(deployment, "1")
             cmd.append(f"--replicas={replica_num}")
             returncode, _, _ = self.do_popen(cmd)
             if returncode != 0:
                 raise SystemExit(returncode)
-            cmd = cmd[:5]
         self.check_scale(method="scale", namespace=namespace)
-        logging.info(f'scaled {",".join(scaled_deplyoments)}')
 
     def stop(self, force=None, cleanup=None):
         env = self.get_env()
