@@ -59,7 +59,7 @@ jobs:
 
       - run: |
           brew install coreutils
-          echo $(sha256sum mlsetup-${{matrix.os}}-${{ matrix.arch }} | awk '{ print $1 }') >> sha256sum-darwin-amd64.txt
+          echo $(sha256sum mlsetup-${{matrix.os}}-${{ matrix.arch }} | awk '{ print $1 }') >> sha256sum-${{matrix.os}}-${{ matrix.arch }}.txt
 
       - name: Release
         uses: softprops/action-gh-release@v1
