@@ -1295,7 +1295,7 @@ class K8sConfig(BaseConfig):
 
         stop = check_scale_status(i_scale, namespace)
         while stop < len(scaled_deplyoments):
-            stop = check_scale_status(i_scale)
+            stop = check_scale_status(i_scale,namespace)
 
     def check_k8s_resource_exist(self, resource: str, name: str, namespace: str = None):
         cmd = ["kubectl", "get", resource, name]
