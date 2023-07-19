@@ -150,7 +150,7 @@ setup_verify_arch() {
             ;;
         arm64)
             ARCH=arm64
-            SUFFIX=-${ARCH}
+            SUFFIX="-${OSTYPE}-${ARCH}"
             ;;
         s390x)
             ARCH=s390x
