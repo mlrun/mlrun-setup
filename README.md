@@ -60,7 +60,9 @@ Usage: mlsetup docker [OPTIONS]
   Deploy mlrun and nuclio services using Docker compose
 
 Options:
-  -j, --jupyter             deploy Jupyter container
+Options:
+  -j, --jupyter TEXT        deploy Jupyter container, can provide jupyter
+                            image as argument
   -d, --data-volume TEXT    host path prefix to the location of db and
                             artifacts
   --volume-mount TEXT       container mount path (of the data-volume), when
@@ -73,6 +75,7 @@ Options:
   -f, --env-file TEXT       path to the mlrun .env file (defaults to
                             '~/.mlrun.env')
   --tag TEXT                MLRun version tag
+  --milvus                  Install Milvus vector database
   --compose-file TEXT       path to save the generated compose.yaml file
   -v, --verbose             verbose log
   --simulate                simulate install (print commands vs exec)
@@ -92,10 +95,11 @@ Options:
   -r, --registry-args TEXT  docker registry args, can be a kind string (local,
                             docker, ..) or a set of key=value args e.g. -r
                             username=joe -r password=j123 -r
-                            email=joe@email.com, supported keys:
-                            kind,server,username,email,url,secret,push_secret
-  -o, --options TEXT        optional services to enable (end with '-' to
-                            disable), supported services:
+                            email=joe@email.com, supported keys: kind,server,u
+                            sername,password,email,url,secret,push_secret
+  -o, --options TEXT        optional services to enable, supported services:
+                            spark,monitoring,jupyter,pipelines
+  -d, --disable TEXT        optional services to disable, supported services:
                             spark,monitoring,jupyter,pipelines
   -s, --set TEXT            Additional helm --set commands, accept multiple
                             --set options
@@ -108,6 +112,8 @@ Options:
   -v, --verbose             verbose log
   --simulate                simulate install (print commands vs exec)
   --chart-ver TEXT          MLRun helm chart version
+  -j, --jupyter TEXT        deploy Jupyter container, can provide jupyter
+                            image as argument
   --help                    Show this message and exit.
 ```
 
