@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [ amd64 ]
+        arch: [ amd64, arm64 ]
         os: [ darwin ]
 
     steps:
