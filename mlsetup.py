@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import urllib.request
+from typing import List
 
 import click
 import dotenv
@@ -792,6 +793,7 @@ class DockerConfig(BaseConfig):
             print(f"{key}={val}")
             if val is not None:
                 env[key] = val
+                self.set_env({key: val})
 
         path_map = None
         if volume_mount != docker_volume_mount:
@@ -823,10 +825,14 @@ class DockerConfig(BaseConfig):
             print("Jupyter address:   http://localhost:8888")
 
     def stop(self, force=None, cleanup=None):
-        compose_file = self.get_env().get("MLRUN_CONF_COMPOSE_PATH", "")
+        env = os.environ.copy()
+        for k, v in self.get_env().items():
+            env[k] = v
+
+        compose_file = env.get("MLRUN_CONF_COMPOSE_PATH", "")
         if compose_file:
             returncode, _, _ = self.do_popen(
-                ["docker-compose", "-f", compose_file, "down"]
+                ["docker-compose", "-f", compose_file, "down"], env=env
             )
             if returncode != 0:
                 self.set_env({"MLRUN_DBPATH": ""})  # disable the DB access
@@ -834,20 +840,23 @@ class DockerConfig(BaseConfig):
         self.stop_nuclio_containers()
         self.clear_env(cleanup)
 
-    def stop_nuclio_containers(self):
-        cmd = [
-            "docker",
-            "ps",
-            "--format",
-            "{{.ID}}",
-            "-f",
-            "label=nuclio.io/function-name",
-        ]
+    def query_containers_by_filter(self, filters: dict) -> List[str]:
+        cmd = ["docker", "ps", "-q"]
+        for k, v in filters.items():
+            cmd.append("-f")
+            cmd.append(f"{k}={v}")
         returncode, out, err = self.do_popen(cmd, interactive=False)
         if returncode != 0:
             print(err)
-            return
+            return []
         containers = out.split()
+        if not containers:
+            return []
+        return containers
+
+    def stop_nuclio_containers(self):
+        containers = self.query_containers_by_filter(filters={"label":"nuclio.io/function-name"})
+        containers += self.query_containers_by_filter(filters={"name":"nuclio-local-storage-reader"})
         if not containers:
             return
         print(f"Stopping nuclio function containers: {' '.join(containers)}")
@@ -1467,7 +1476,7 @@ mlrun_api_template = """
 
 jupyter_template = """
   jupyter:
-    image: "{JUPYTER_IMAGE}"
+    image: "${JUPYTER_IMAGE}"
     command:
       - start-notebook.sh
       - "--ip='0.0.0.0'"
