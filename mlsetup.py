@@ -986,14 +986,13 @@ class K8sConfig(BaseConfig):
             helm_run_cmd += ["--set", f"global.externalHostAddress={external_addr}"]
         if jupyter:
             tag_jupyter = None
-            image_jupyter = None
             if ":" in jupyter:
                 tag_jupyter = jupyter.split(":")[-1]
-                image_jupyter = jupyter.split(":")[0]
-            logging.info(f"Jupyter container image: {image_jupyter}:{tag_jupyter} ")
+                jupyter = jupyter.split(":")[0]
+            logging.info(f'Jupyter container image: {jupyter}:{tag_jupyter or "latest"} ')
             helm_run_cmd += [
                 "--set",
-                f"jupyterNotebook.image.repository={image_jupyter}",
+                f"jupyterNotebook.image.repository={jupyter}",
             ]
             helm_run_cmd += [
                 "--set",
