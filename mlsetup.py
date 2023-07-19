@@ -9,7 +9,6 @@ import subprocess
 import sys
 import urllib.request
 from typing import List
-import json
 
 import click
 import dotenv
@@ -306,6 +305,7 @@ def local(
 @env_vars_opt
 @env_file_opt
 @click.option("--tag", help="MLRun version tag")
+@click.option("--milvus", is_flag=True, help="Install Milvus vector database")
 @click.option("--compose-file", help="path to save the generated compose.yaml file")
 @click.option("--verbose", "-v", is_flag=True, help="verbose log")
 @click.option(
@@ -321,6 +321,7 @@ def docker(
     env_vars,
     env_file,
     tag,
+    milvus,
     compose_file,
     verbose,
     simulate,
@@ -339,6 +340,7 @@ def docker(
         foreground,
         port,
         tag,
+        milvus,
         compose_file,
     )
 
@@ -745,6 +747,7 @@ class DockerConfig(BaseConfig):
         foreground,
         port,
         tag,
+        milvus,
         compose_file,
         **kwargs,
     ):
@@ -773,11 +776,16 @@ class DockerConfig(BaseConfig):
             cmd += ["-d"]
 
         compose_body = compose_template + mlrun_api_template
+
         jupyter_image = ""
         if jupyter:
             compose_body += jupyter_template
             jupyter_image = f"mlrun/jupyter:{tag}" if jupyter == "." else jupyter
             logging.info(f"Jupyter container image: {jupyter_image} ")
+
+        if milvus:
+            compose_body += milvus_template
+
         compose_body += suffix_template
         with open(compose_file, "w") as fp:
             fp.write(compose_body)
@@ -817,15 +825,18 @@ class DockerConfig(BaseConfig):
             raise SystemExit(returncode)
 
         print()
-        print(f"MLRun API address: http://localhost:{port}")
+        print(f"MLRun API address:  http://localhost:{port}")
         print(
-            f"MLRun UI address:  http://localhost:{os.environ.get('MLRUN_UI_PORT', '8060')}"
+            f"MLRun UI address:   http://localhost:{os.environ.get('MLRUN_UI_PORT', '8060')}"
         )
         print(
-            f"Nuclio UI address: http://localhost:{os.environ.get('NUCLIO_PORT', '8070')}"
+            f"Nuclio UI address:  http://localhost:{os.environ.get('NUCLIO_PORT', '8070')}"
         )
         if jupyter:
-            print("Jupyter address:   http://localhost:8888")
+            print("Jupyter address:    http://localhost:8888")
+        if milvus:
+            print("Milvus API address: http://localhost:19530")
+            print("Minio API address:  http://localhost:9000")
 
     def stop(self, force=None, cleanup=None):
         compose_file = self.get_env().get("MLRUN_CONF_COMPOSE_PATH", "")
@@ -856,8 +867,12 @@ class DockerConfig(BaseConfig):
         return containers or []
 
     def stop_nuclio_containers(self):
-        containers = self.query_containers_by_filter(filters={"label":"nuclio.io/function-name"})
-        containers += self.query_containers_by_filter(filters={"name":"nuclio-local-storage-reader"})
+        containers = self.query_containers_by_filter(
+            filters={"label": "nuclio.io/function-name"}
+        )
+        containers += self.query_containers_by_filter(
+            filters={"name": "nuclio-local-storage-reader"}
+        )
         if not containers:
             return
         print(f"Stopping nuclio function containers: {' '.join(containers)}")
@@ -999,7 +1014,9 @@ class K8sConfig(BaseConfig):
             if ":" in jupyter:
                 tag_jupyter = jupyter.split(":")[-1]
                 jupyter = jupyter.split(":")[0]
-            logging.info(f'Jupyter container image: {jupyter}:{tag_jupyter or "latest"} ')
+            logging.info(
+                f'Jupyter container image: {jupyter}:{tag_jupyter or "latest"} '
+            )
             helm_run_cmd += [
                 "--set",
                 f"jupyterNotebook.image.repository={jupyter}",
@@ -1264,6 +1281,7 @@ class K8sConfig(BaseConfig):
 
     def check_scale(self, method, namespace, services=None):
         i_scale = "1" if method == "scale" else "0"
+
         # todo: support check scale for more then one replica
         def check_scale_status(i_scale, namespace):
             cmd = ["kubectl", "-n", namespace, "get", "deployments.apps"]
@@ -1493,6 +1511,51 @@ jupyter_template = """
       - "${SHARED_DIR}:${VOLUME_MOUNT}"
     networks:
       - mlrun
+"""
+
+milvus_template = """
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${SHARED_DIR}/etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ${SHARED_DIR}/minio:/minio_data
+    command: minio server /minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.2.11
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ${SHARED_DIR}/milvus:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
 """
 
 suffix_template = """
