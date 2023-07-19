@@ -1259,7 +1259,7 @@ class K8sConfig(BaseConfig):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            cmd = ["awk", "{print $4}"]
+            cmd = ["grep", "nuclio\|mlrun\|mpi"]
             child = subprocess.Popen(
                 cmd,
                 env=None,
@@ -1267,7 +1267,7 @@ class K8sConfig(BaseConfig):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            cmd = ["tail", "-n", "+2"]
+            cmd = ["awk", "{print $4}"]
             child = subprocess.Popen(
                 cmd,
                 env=None,
@@ -1296,7 +1296,6 @@ class K8sConfig(BaseConfig):
         stop = check_scale_status(i_scale, namespace)
         while stop < len(scaled_deplyoments):
             stop = check_scale_status(i_scale,namespace)
-
     def check_k8s_resource_exist(self, resource: str, name: str, namespace: str = None):
         cmd = ["kubectl", "get", resource, name]
         if namespace:
