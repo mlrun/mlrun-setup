@@ -844,6 +844,7 @@ class DockerConfig(BaseConfig):
         env = os.environ.copy()
         for key, val in json.loads(compose_env).items():
             env[key] = val
+        self.stop_nuclio_containers()
         if compose_file:
             returncode, _, _ = self.do_popen(
                 ["docker-compose", "-f", compose_file, "down"], env=env
@@ -851,7 +852,6 @@ class DockerConfig(BaseConfig):
             if returncode != 0:
                 self.set_env({"MLRUN_DBPATH": ""})  # disable the DB access
                 raise SystemExit(returncode)
-        self.stop_nuclio_containers()
         self.clear_env(cleanup)
 
     def query_containers_by_filter(self, filters: dict) -> List[str]:
@@ -1525,6 +1525,8 @@ milvus_template = """
     volumes:
       - ${SHARED_DIR}/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - mlrun
 
   minio:
     container_name: milvus-minio
@@ -1540,6 +1542,8 @@ milvus_template = """
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - mlrun
 
   milvus:
     container_name: milvus-standalone
@@ -1556,6 +1560,8 @@ milvus_template = """
     depends_on:
       - "etcd"
       - "minio"
+    networks:
+      - mlrun
 """
 
 suffix_template = """
