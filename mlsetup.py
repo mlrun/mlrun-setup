@@ -35,7 +35,8 @@ valid_registry_args = [
     "secret",
     "push_secret",
 ]
-optional_services = ["spark", "monitoring", "jupyter", "pipelines"]
+docker_services = ["jupyter", "milvus", "mysql"]
+k8s_services = ["spark", "monitoring", "jupyter", "pipelines"]
 service_map = {
     "s": "spark-operator",
     "m": "kube-prometheus-stack",
@@ -305,7 +306,13 @@ def local(
 @env_vars_opt
 @env_file_opt
 @click.option("--tag", help="MLRun version tag")
-@click.option("--milvus", is_flag=True, help="Install Milvus vector database")
+@click.option(
+    "--options",
+    "-o",
+    default=[],
+    multiple=True,
+    help=f"optional services to enable, supported services: {','.join(docker_services)}",
+)
 @click.option("--compose-file", help="path to save the generated compose.yaml file")
 @click.option("--verbose", "-v", is_flag=True, help="verbose log")
 @click.option(
@@ -321,7 +328,7 @@ def docker(
     env_vars,
     env_file,
     tag,
-    milvus,
+    options,
     compose_file,
     verbose,
     simulate,
@@ -340,7 +347,7 @@ def docker(
         foreground,
         port,
         tag,
-        milvus,
+        options,
         compose_file,
     )
 
@@ -375,14 +382,14 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "-o",
     default=[],
     multiple=True,
-    help=f"optional services to enable, supported services: {','.join(optional_services)}",
+    help=f"optional services to enable, supported services: {','.join(k8s_services)}",
 )
 @click.option(
     "--disable",
     "-d",
     default=[],
     multiple=True,
-    help=f"optional services to disable, supported services: {','.join(optional_services)}",
+    help=f"optional services to disable, supported services: {','.join(k8s_services)}",
 )
 @click.option(
     "--set",
@@ -747,12 +754,14 @@ class DockerConfig(BaseConfig):
         foreground,
         port,
         tag,
-        milvus,
+        options,
         compose_file,
         **kwargs,
     ):
         """Deploy mlrun and nuclio services using Docker compose"""
 
+        print(options)
+        options = [_partial_match(option, docker_services) for option in options]
         if is_codespaces:
             volume_mount = volume_mount or "/tmp/mlrun"
             data_volume = data_volume or "/mnt/containerTmp/mlrun"
@@ -778,13 +787,18 @@ class DockerConfig(BaseConfig):
         compose_body = compose_template + mlrun_api_template
 
         jupyter_image = ""
+        if not jupyter and "jupyter" in options:
+            jupyter = "."
         if jupyter:
             compose_body += jupyter_template
             jupyter_image = f"mlrun/jupyter:{tag}" if jupyter == "." else jupyter
             logging.info(f"Jupyter container image: {jupyter_image} ")
 
-        if milvus:
+        if "milvus" in options:
             compose_body += milvus_template
+
+        if "mysql" in options:
+            compose_body += mysql_template
 
         compose_body += suffix_template
         with open(compose_file, "w") as fp:
@@ -825,7 +839,7 @@ class DockerConfig(BaseConfig):
             raise SystemExit(returncode)
 
         print()
-        print(f"MLRun API address:  http://localhost:{port}")
+        print(f"MLRun API address:  http://localhost:{port} (internal: http://mlrun-api:{port})")
         print(
             f"MLRun UI address:   http://localhost:{os.environ.get('MLRUN_UI_PORT', '8060')}"
         )
@@ -834,9 +848,13 @@ class DockerConfig(BaseConfig):
         )
         if jupyter:
             print("Jupyter address:    http://localhost:8888")
-        if milvus:
-            print("Milvus API address: http://localhost:19530")
-            print("Minio API address:  http://localhost:9000")
+        if "milvus" in options:
+            print("Milvus API address: http://localhost:19530 (internal: http://milvus:19530)")
+            print("Minio API address:  http://localhost:9000 (internal: http://minio:9000)")
+        if "mysql" in options:
+            print(f"MySQL connection str:")
+            print(f"  From Containers: {mysql_connection_url}")
+            print(f"  From host:       {mysql_connection_url.replace('sqldb', 'localhost')}")
 
     def stop(self, force=None, cleanup=None):
         compose_file = self.get_env().get("MLRUN_CONF_COMPOSE_PATH", "")
@@ -1064,15 +1082,8 @@ class K8sConfig(BaseConfig):
         extra_sets = []
         if include:
             for service in include:
-                if (
-                    service not in optional_services
-                    and service not in service_map.keys()
-                ):
-                    raise ValueError(
-                        f"illegal service name {service}, "
-                        f"optional services are {','.join(optional_services)}"
-                    )
-                extra_sets.append(service_map[service[0]] + f".enabled={enable}")
+                match = _partial_match(service, k8s_services)
+                extra_sets.append(service_map[match] + f".enabled={enable}")
         return extra_sets
 
     def configure_registry(self, namespace, registry_args):
@@ -1379,6 +1390,15 @@ def _list2dict(lines: list, default_key="", default_value=None):
     return out
 
 
+def _partial_match(text, services):
+    for service in services:
+        if service.startswith(text):
+            return service
+    raise ValueError(
+        f"illegal service name {text}, " f"optional services are {','.join(services)}"
+    )
+
+
 def _docker_path(filepath: str):
     if re.match(r"^[a-zA-Z]:\\.?", filepath):
         # convert windows paths to docker style
@@ -1560,6 +1580,21 @@ milvus_template = """
     depends_on:
       - "etcd"
       - "minio"
+    networks:
+      - mlrun
+"""
+
+mysql_connection_url = "mysql+mysqlconnector://root:mysql@sqldb/db"
+mysql_template = """
+  sqldb:
+    image: mysql:latest
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: db
+    volumes:
+      - ${SHARED_DIR}/mysql:/var/lib/mysql
     networks:
       - mlrun
 """
