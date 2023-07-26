@@ -1,6 +1,6 @@
 # MLRun Setup
 
-Utility for installing MLRun service locally or over Kubernetes
+Utility for installing MLRun and auxiliary services locally or over Kubernetes
 
 This utility can be executed from Python or use one of the packaged binaries (one per OS) in the releases tab
 
@@ -23,13 +23,14 @@ Once its installed run `./mlsetup.py [COMMAND]` (for example `./mlsetup.py kuber
 to download the binary to your system (on Linux or MacOS):
 
     curl -sfL https://get.mymlrun.org | bash -
+    mlsetup [OPTIONS] COMMAND [ARGS]
 
 ## Usage
 
 Choose the specific installation option (local, docker, kubernetes, and remote), 
 and run the command with default or custom options (see `mlsetup COMMAND --help` for option specific help).
 
-> When using the python library replace `mlsetup` with `.\mlsetup.py`.
+> When using the python library replace `mlsetup` command with `.\mlsetup.py`.
 
 ```
 Usage: mlsetup [OPTIONS] COMMAND [ARGS]...
@@ -46,10 +47,13 @@ Commands:
   kubernetes  Install MLRun service on Kubernetes
   latest      Get the latest MLRun version
   local       Install MLRun service as a local process (limited, no UI...
+  pause       Scale MLRun deployments to zero Plese note - if you want to...
   remote      Connect to remote MLRun service (over Kubernetes)
+  scale       Scale up MLRun deployments
   set         Set configuration in mlrun default or specified .env file
   start       Start MLRun service, auto detect the best method...
-  stop        Stop MLRun service which was started using the start command
+  stop        Stop MLRun service which was started using this CLI
+  uninstall   Uninstall and cleanup MLRun service which was started using...
 ```
 
 ### Install with Docker Compose
@@ -75,7 +79,8 @@ Options:
   -f, --env-file TEXT       path to the mlrun .env file (defaults to
                             '~/.mlrun.env')
   --tag TEXT                MLRun version tag
-  --milvus                  Install Milvus vector database
+  -o, --options TEXT        optional services to enable, supported services:
+                            jupyter,milvus,mysql
   --compose-file TEXT       path to save the generated compose.yaml file
   -v, --verbose             verbose log
   --simulate                simulate install (print commands vs exec)
@@ -120,15 +125,14 @@ Options:
 ### Uninstall
 
 ```
-Usage: mlsetup stop [OPTIONS]
+UUsage: mlsetup.py uninstall [OPTIONS]
 
-  Stop MLRun service which was started using the start command
+  Uninstall and cleanup MLRun service which was started using this CLI
 
 Options:
   -f, --env-file TEXT    path to the mlrun .env file (defaults to
                          '~/.mlrun.env')
   -d, --deployment TEXT  deployment mode: local | docker | kuberenetes
-  -c, --cleanup          delete the specified or default env file
   -f, --force            force stop
   -v, --verbose          verbose log
   --help                 Show this message and exit.
