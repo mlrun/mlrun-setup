@@ -1083,7 +1083,7 @@ class K8sConfig(BaseConfig):
         if include:
             for service in include:
                 match = _partial_match(service, k8s_services)
-                extra_sets.append(service_map[match] + f".enabled={enable}")
+                extra_sets.append(service_map[match[0]] + f".enabled={enable}")
         return extra_sets
 
     def configure_registry(self, namespace, registry_args):
