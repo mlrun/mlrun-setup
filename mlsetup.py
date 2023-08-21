@@ -7,8 +7,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
-from typing import List
+from typing import List,Tuple
 
 import click
 import dotenv
@@ -16,6 +17,30 @@ import dotenv
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 is_dummy_mode = os.environ.get("DUMMY_MODE", "")
 default_env_file = "~/.mlrun.env"
+#default jupyter extra env
+k8s_jupyter_extra_env = [
+ {'name': 'MLRUN_ARTIFACT_PATH',
+  'value': 's3://mlrun/projects/{{run.project}}/artifacts'},
+ {'name': 'MLRUN_FEATURE_STORE__DATA_PREFIXES__DEFAULT',
+  'value': 's3://mlrun/projects/{project}/FeatureStore/{name}/{kind}'},
+ {'name': 'MLRUN_FEATURE_STORE__DATA_PREFIXES__NOSQL', 'value': ''},
+ {'name': 'MLRUN_FEATURE_STORE__DEFAULT_TARGETS', 'value': 'parquet'},
+ {'name': 'S3_ENDPOINT_URL',
+  'value': 'http://minio.mlrun.svc.cluster.local:9000'},
+ {'name': 'AWS_SECRET_ACCESS_KEY', 'value': 'minio123'},
+ {'name': 'AWS_ACCESS_KEY_ID', 'value': 'minio'}]
+#Build a method that added new env for jupyter if needed, that becuase jupyter helm does not support key value env add like mlrun api
+def edit_k8s_jupyter_extra_env(env:List[Tuple[str,int or str]]):
+    global k8s_jupyter_extra_env
+    for name,value in env:
+        k8s_jupyter_extra_env.append({"name":name,"value":value})
+    k8s_jupyter_extra_env_set = []
+    for i in range(len(k8s_jupyter_extra_env)):
+        name = k8s_jupyter_extra_env[i].get("name")
+        value = k8s_jupyter_extra_env[i].get("value") or k8s_jupyter_extra_env[i].get("valueFrom")
+        k8s_jupyter_extra_env_set.append(f"jupyterNotebook.extraEnv[{i}].name={name}")
+        k8s_jupyter_extra_env_set.append(f"jupyterNotebook.extraEnv[{i}].value={value}")
+    return k8s_jupyter_extra_env_set
 scaled_deplyoments = [
     "mlrun-api-chief",
     "mlrun-db",
@@ -38,10 +63,10 @@ valid_registry_args = [
 docker_services = ["jupyter", "milvus", "mysql"]
 k8s_services = ["spark", "monitoring", "jupyter", "pipelines"]
 service_map = {
-    "s": "spark-operator",
-    "m": "kube-prometheus-stack",
-    "j": "jupyterNotebook",
-    "p": "pipelines",
+    "spark": "spark-operator",
+    "monitoring": "kube-prometheus-stack",
+    "jupyter": "jupyterNotebook",
+    "pipelines": "pipelines",
 }
 # auto detect if running inside GitHub Codespaces
 is_codespaces = "CODESPACES" in os.environ and "CODESPACE_NAME" in os.environ
@@ -416,6 +441,11 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     default="",
     help="deploy Jupyter container, can provide jupyter image as argument",
 )
+@click.option(
+    "--milvus",
+    is_flag=True,
+    help="install milvus standalone service",
+)
 def kubernetes(
     name,
     namespace,
@@ -431,6 +461,7 @@ def kubernetes(
     simulate,
     chart_ver,
     jupyter,
+    milvus,
 ):
     """Install MLRun service on Kubernetes"""
     config = K8sConfig(env_file, verbose, env_vars_opt=env_vars, simulate=simulate)
@@ -448,6 +479,7 @@ def kubernetes(
         disable,
         chart_ver,
         jupyter,
+        milvus,
     )
 
 
@@ -839,7 +871,9 @@ class DockerConfig(BaseConfig):
             raise SystemExit(returncode)
 
         print()
-        print(f"MLRun API address:  http://localhost:{port} (internal: http://mlrun-api:{port})")
+        print(
+            f"MLRun API address:  http://localhost:{port} (internal: http://mlrun-api:{port})"
+        )
         print(
             f"MLRun UI address:   http://localhost:{os.environ.get('MLRUN_UI_PORT', '8060')}"
         )
@@ -849,12 +883,18 @@ class DockerConfig(BaseConfig):
         if jupyter:
             print("Jupyter address:    http://localhost:8888")
         if "milvus" in options:
-            print("Milvus API address: http://localhost:19530 (internal: http://milvus:19530)")
-            print("Minio API address:  http://localhost:9000 (internal: http://minio:9000)")
+            print(
+                "Milvus API address: http://localhost:19530 (internal: http://milvus:19530)"
+            )
+            print(
+                "Minio API address:  http://localhost:9000 (internal: http://minio:9000)"
+            )
         if "mysql" in options:
             print(f"MySQL connection str:")
             print(f"  From Containers: {mysql_connection_url}")
-            print(f"  From host:       {mysql_connection_url.replace('sqldb', 'localhost')}")
+            print(
+                f"  From host:       {mysql_connection_url.replace('sqldb', 'localhost')}"
+            )
 
     def stop(self, force=None, cleanup=None):
         compose_file = self.get_env().get("MLRUN_CONF_COMPOSE_PATH", "")
@@ -935,6 +975,7 @@ class K8sConfig(BaseConfig):
         disable=None,
         chart_ver=None,
         jupyter="",
+        milvus=None,
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
@@ -981,7 +1022,19 @@ class K8sConfig(BaseConfig):
 
         # Install and update Helm charts
         helm_commands = [
-            ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"],
+            ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"]
+        ]
+        if milvus:
+            helm_commands += [
+                [
+                    "helm",
+                    "repo",
+                    "add",
+                    "milvus",
+                    "https://milvus-io.github.io/milvus-helm/",
+                ]
+            ]
+        helm_commands += [
             ["helm", "repo", "list"],
             ["helm", "repo", "update"],
         ]
@@ -1002,8 +1055,49 @@ class K8sConfig(BaseConfig):
         for setting, value in new_settings.items():
             env_settings["MLRUN_CONF_K8S_" + setting] = value
         self.set_env(env_settings)
+        if milvus:
+            helm_milvus_install = [
+                "helm",
+                "install",
+                "-n",
+                namespace,
+                "milvus",
+                "milvus/milvus",
+                "--set",
+                "cluster.enabled=false",
+                "--set",
+                "etcd.replicaCount=1",
+                "--set",
+                "minio.mode=standalone",
+                "--set",
+                "pulsar.enabled=false",
+                "--set",
+                "service.type=NodePort",
+                "--set",
+                "livenessProbe.enabled=false",
+                "--set",
+                "readinessProbe.enabled=False",
+                "--set",
+                "service.nodePort=30020"
+            ]
+            # change the default mlrun minio port, cause milvus minio using those ports
+            service_options += [
+                "minio.service.port=9010",
+                "minio.consoleService.port=9011",
+                "minio.endpointPort==9010",
+                "minio.minioAPIPort=9010",
+                "minio.minioConsolePort=9011",
+                "mlrun-ce.minio.service.url=http://minio.mlrun.svc.cluster.local:9010",
 
+            ]
+            #Point Jupyter for the new minio port for local runs
+            service_options += edit_k8s_jupyter_extra_env(env=[("S3_ENDPOINT_URL","http://minio.mlrun.svc.cluster.local:9010")])
+            logging.info("Running Milvus helm install...")
+            returncode, _, _ = self.do_popen(helm_milvus_install)
+            if returncode != 0:
+                raise SystemExit(returncode)
         # run helm to install mlrun
+        env_settings["MILVUS_INSTALL"] = "true"
         helm_run_cmd = [
             "helm",
             "--namespace",
@@ -1062,7 +1156,7 @@ class K8sConfig(BaseConfig):
         if self.verbose:
             helm_run_cmd += ["--debug"]
         helm_run_cmd += ["mlrun-ce/mlrun-ce"]
-
+        print(helm_run_cmd)
         logging.info("Running helm install...")
         returncode, _, _ = self.do_popen(helm_run_cmd)
         if returncode != 0:
@@ -1074,6 +1168,11 @@ class K8sConfig(BaseConfig):
         print(
             "configure your mlrun client environment to use the installed service:\n"
             f"mlrun config set -a {dbpath}"
+        )
+        milvus_path = f"http://{external_addr or 'localhost'}:{30020}"
+        print(
+            "\nMILVUS is exposed externally at:\n"
+            f"{milvus_path}"
         )
         self.set_env(env_settings)
 
