@@ -1178,14 +1178,15 @@ class K8sConfig(BaseConfig):
             "configure your mlrun client environment to use the installed service:\n"
             f"mlrun config set -a {dbpath}"
         )
-        milvus_path_external = f"http://{external_addr or 'localhost'}:{30020}"
-        milvus_path_internal = f"http://milvus:{19530}"
-        print(
-            "\nMILVUS is exposed externally at:\n"
-            f"{milvus_path_external}"
-            "\nMILVUS is exposed internally at:\n"
-            f"{milvus_path_internal}"
-        )
+        if milvus:
+            milvus_path_external = f"http://{external_addr or 'localhost'}:{30020}"
+            milvus_path_internal = f"http://milvus:{19530}"
+            print(
+                "\nMILVUS is exposed externally at:\n"
+                f"{milvus_path_external}"
+                "\nMILVUS is exposed internally at:\n"
+                f"{milvus_path_internal}"
+            )
         self.set_env(env_settings)
 
     @staticmethod
