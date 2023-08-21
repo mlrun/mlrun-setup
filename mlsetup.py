@@ -7,9 +7,8 @@ import shutil
 import socket
 import subprocess
 import sys
-import time
 import urllib.request
-from typing import List,Tuple
+from typing import List, Tuple
 
 import click
 import dotenv
@@ -17,30 +16,40 @@ import dotenv
 logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
 is_dummy_mode = os.environ.get("DUMMY_MODE", "")
 default_env_file = "~/.mlrun.env"
-#default jupyter extra env
+# default jupyter extra env
 k8s_jupyter_extra_env = [
- {'name': 'MLRUN_ARTIFACT_PATH',
-  'value': 's3://mlrun/projects/{{run.project}}/artifacts'},
- {'name': 'MLRUN_FEATURE_STORE__DATA_PREFIXES__DEFAULT',
-  'value': 's3://mlrun/projects/{project}/FeatureStore/{name}/{kind}'},
- {'name': 'MLRUN_FEATURE_STORE__DATA_PREFIXES__NOSQL', 'value': ''},
- {'name': 'MLRUN_FEATURE_STORE__DEFAULT_TARGETS', 'value': 'parquet'},
- {'name': 'S3_ENDPOINT_URL',
-  'value': 'http://minio.mlrun.svc.cluster.local:9000'},
- {'name': 'AWS_SECRET_ACCESS_KEY', 'value': 'minio123'},
- {'name': 'AWS_ACCESS_KEY_ID', 'value': 'minio'}]
-#Build a method that added new env for jupyter if needed, that becuase jupyter helm does not support key value env add like mlrun api
-def edit_k8s_jupyter_extra_env(env:List[Tuple[str,int or str]]):
+    {
+        "name": "MLRUN_ARTIFACT_PATH",
+        "value": "s3://mlrun/projects/{{run.project}}/artifacts",
+    },
+    {
+        "name": "MLRUN_FEATURE_STORE__DATA_PREFIXES__DEFAULT",
+        "value": "s3://mlrun/projects/{project}/FeatureStore/{name}/{kind}",
+    },
+    {"name": "MLRUN_FEATURE_STORE__DATA_PREFIXES__NOSQL", "value": ""},
+    {"name": "MLRUN_FEATURE_STORE__DEFAULT_TARGETS", "value": "parquet"},
+    {"name": "S3_ENDPOINT_URL", "value": "http://minio.mlrun.svc.cluster.local:9000"},
+    {"name": "AWS_SECRET_ACCESS_KEY", "value": "minio123"},
+    {"name": "AWS_ACCESS_KEY_ID", "value": "minio"},
+]
+
+
+# Build a method that added new env for jupyter if needed, that becuase jupyter helm does not support key value env add like mlrun api
+def edit_k8s_jupyter_extra_env(env: List[Tuple[str, int or str]]):
     global k8s_jupyter_extra_env
-    for name,value in env:
-        k8s_jupyter_extra_env.append({"name":name,"value":value})
+    for name, value in env:
+        k8s_jupyter_extra_env.append({"name": name, "value": value})
     k8s_jupyter_extra_env_set = []
     for i in range(len(k8s_jupyter_extra_env)):
         name = k8s_jupyter_extra_env[i].get("name")
-        value = k8s_jupyter_extra_env[i].get("value") or k8s_jupyter_extra_env[i].get("valueFrom")
+        value = k8s_jupyter_extra_env[i].get("value") or k8s_jupyter_extra_env[i].get(
+            "valueFrom"
+        )
         k8s_jupyter_extra_env_set.append(f"jupyterNotebook.extraEnv[{i}].name={name}")
         k8s_jupyter_extra_env_set.append(f"jupyterNotebook.extraEnv[{i}].value={value}")
     return k8s_jupyter_extra_env_set
+
+
 scaled_deplyoments = [
     "mlrun-api-chief",
     "mlrun-db",
@@ -1078,7 +1087,7 @@ class K8sConfig(BaseConfig):
                 "--set",
                 "readinessProbe.enabled=False",
                 "--set",
-                "service.nodePort=30020"
+                "service.nodePort=30020",
             ]
             # change the default mlrun minio port, cause milvus minio using those ports
             service_options += [
@@ -1088,10 +1097,11 @@ class K8sConfig(BaseConfig):
                 "minio.minioAPIPort=9010",
                 "minio.minioConsolePort=9011",
                 "mlrun-ce.minio.service.url=http://minio.mlrun.svc.cluster.local:9010",
-
             ]
-            #Point Jupyter for the new minio port for local runs
-            service_options += edit_k8s_jupyter_extra_env(env=[("S3_ENDPOINT_URL","http://minio.mlrun.svc.cluster.local:9010")])
+            # Point Jupyter for the new minio port for local runs
+            service_options += edit_k8s_jupyter_extra_env(
+                env=[("S3_ENDPOINT_URL", "http://minio.mlrun.svc.cluster.local:9010")]
+            )
             logging.info("Running Milvus helm install...")
             returncode, _, _ = self.do_popen(helm_milvus_install)
             if returncode != 0:
