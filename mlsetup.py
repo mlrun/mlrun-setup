@@ -70,12 +70,13 @@ valid_registry_args = [
     "push_secret",
 ]
 docker_services = ["jupyter", "milvus", "mysql"]
-k8s_services = ["spark", "monitoring", "jupyter", "pipelines"]
+k8s_services = ["spark", "monitoring", "jupyter", "pipelines","milvus"]
 service_map = {
     "spark": "spark-operator",
     "monitoring": "kube-prometheus-stack",
     "jupyter": "jupyterNotebook",
     "pipelines": "pipelines",
+    "milvus": "milvus"
 }
 # auto detect if running inside GitHub Codespaces
 is_codespaces = "CODESPACES" in os.environ and "CODESPACE_NAME" in os.environ
@@ -450,11 +451,7 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     default="",
     help="deploy Jupyter container, can provide jupyter image as argument",
 )
-@click.option(
-    "--milvus",
-    is_flag=True,
-    help="install milvus standalone service",
-)
+
 def kubernetes(
     name,
     namespace,
@@ -470,7 +467,6 @@ def kubernetes(
     simulate,
     chart_ver,
     jupyter,
-    milvus,
 ):
     """Install MLRun service on Kubernetes"""
     config = K8sConfig(env_file, verbose, env_vars_opt=env_vars, simulate=simulate)
@@ -488,7 +484,6 @@ def kubernetes(
         disable,
         chart_ver,
         jupyter,
-        milvus,
     )
 
 
@@ -984,7 +979,6 @@ class K8sConfig(BaseConfig):
         disable=None,
         chart_ver=None,
         jupyter="",
-        milvus=None,
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
@@ -1033,7 +1027,7 @@ class K8sConfig(BaseConfig):
         helm_commands = [
             ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"]
         ]
-        if milvus:
+        if "milvus" in options:
             helm_commands += [
                 [
                     "helm",
@@ -1064,7 +1058,7 @@ class K8sConfig(BaseConfig):
         for setting, value in new_settings.items():
             env_settings["MLRUN_CONF_K8S_" + setting] = value
         self.set_env(env_settings)
-        if milvus:
+        if "milvus" in options:
             helm_milvus_install = [
                 "helm",
                 "install",
@@ -1178,7 +1172,7 @@ class K8sConfig(BaseConfig):
             "configure your mlrun client environment to use the installed service:\n"
             f"mlrun config set -a {dbpath}"
         )
-        if milvus:
+        if "milvus" in options:
             milvus_path_external = f"http://{external_addr or 'localhost'}:{30020}"
             milvus_path_internal = f"http://milvus:{19530}"
             print(
