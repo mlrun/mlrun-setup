@@ -9,7 +9,7 @@ import subprocess
 import sys
 import urllib.request
 from typing import List, Tuple
-
+import time
 import click
 import dotenv
 
@@ -1102,6 +1102,7 @@ class K8sConfig(BaseConfig):
                 raise SystemExit(returncode)
         # run helm to install mlrun
         env_settings["MILVUS_INSTALL"] = "true"
+        time.sleep(100)
         helm_run_cmd = [
             "helm",
             "--namespace",
@@ -1159,7 +1160,7 @@ class K8sConfig(BaseConfig):
 
         if self.verbose:
             helm_run_cmd += ["--debug"]
-        helm_run_cmd += ["/Users/Gilad_Shapira/new-ce/new-mlrun-ce"]
+        helm_run_cmd += ["mlrun-ce/mlrun-ce"]
         logging.info("Running helm install...")
         returncode, _, _ = self.do_popen(helm_run_cmd)
         if returncode != 0:
