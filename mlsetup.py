@@ -36,12 +36,13 @@ valid_registry_args = [
     "push_secret",
 ]
 docker_services = ["jupyter", "milvus", "mysql"]
-k8s_services = ["spark", "monitoring", "jupyter", "pipelines"]
+k8s_services = ["spark", "monitoring", "jupyter", "pipelines","mysql"]
 service_map = {
-    "s": "spark-operator",
-    "m": "kube-prometheus-stack",
-    "j": "jupyterNotebook",
-    "p": "pipelines",
+    "spark": "spark-operator",
+    "monitoring": "kube-prometheus-stack",
+    "jupyter": "jupyterNotebook",
+    "pipelines": "pipelines",
+    "mysql":"mysql",
 }
 # auto detect if running inside GitHub Codespaces
 is_codespaces = "CODESPACES" in os.environ and "CODESPACE_NAME" in os.environ
@@ -416,11 +417,6 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     default="",
     help="deploy Jupyter container, can provide jupyter image as argument",
 )
-@click.option(
-    "--sql",
-    is_flag=True,
-    help="install sql service",
-)
 def kubernetes(
     name,
     namespace,
@@ -436,7 +432,6 @@ def kubernetes(
     simulate,
     chart_ver,
     jupyter,
-    sql
 ):
     """Install MLRun service on Kubernetes"""
     config = K8sConfig(env_file, verbose, env_vars_opt=env_vars, simulate=simulate)
@@ -454,7 +449,6 @@ def kubernetes(
         disable,
         chart_ver,
         jupyter,
-        sql
     )
 
 
@@ -942,7 +936,6 @@ class K8sConfig(BaseConfig):
         disable=None,
         chart_ver=None,
         jupyter="",
-        sql=None,
         **kwargs,
     ):
         logging.info("Start installing MLRun CE")
@@ -991,7 +984,7 @@ class K8sConfig(BaseConfig):
         helm_commands = [
             ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"]
         ]
-        if sql:
+        if "mysql" in options:
             helm_commands.append(
                 ["helm", "repo", "add", "bitnami", "https://charts.bitnami.com/bitnami"]
             )
@@ -1068,7 +1061,7 @@ class K8sConfig(BaseConfig):
             helm_run_cmd += ["--set", opt]
         if chart_ver:
             helm_run_cmd += ["--version", chart_ver]
-        if sql:
+        if "mysql" in options:
             helm_sql_install = [
                 "helm",
                 "install",
@@ -1105,7 +1098,7 @@ class K8sConfig(BaseConfig):
         )
         self.set_env(env_settings)
 
-        if sql:
+        if "mysql" in options:
             print(
                 f"\n* SQL SVC is available at:\nmysql+pymysql://root:sql123@localhost:3111/mlrun_demos\n"
             )
@@ -1115,7 +1108,7 @@ class K8sConfig(BaseConfig):
         if include:
             for service in include:
                 match = _partial_match(service, k8s_services)
-                extra_sets.append(service_map[match[0]] + f".enabled={enable}")
+                extra_sets.append(service_map[match] + f".enabled={enable}")
         return extra_sets
 
     def configure_registry(self, namespace, registry_args):
