@@ -1159,7 +1159,7 @@ class K8sConfig(BaseConfig):
 
         if self.verbose:
             helm_run_cmd += ["--debug"]
-        helm_run_cmd += ["mlrun-ce/mlrun-ce"]
+        helm_run_cmd += ["/Users/Gilad_Shapira/new-ce/new-mlrun-ce"]
         logging.info("Running helm install...")
         returncode, _, _ = self.do_popen(helm_run_cmd)
         if returncode != 0:
