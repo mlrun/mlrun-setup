@@ -945,22 +945,23 @@ class K8sConfig(BaseConfig):
         logging.info(f"Creating kubernetes namespace {namespace}...")
         create_namespace = True
         if self.check_k8s_resource_exist("namespace", namespace):
-            logging.warning(f"Namespace {namespace} already exists")
-            text = click.prompt(
-                "To overwrite the existing namespace press y or Y",
-                type=str,
-                default="n",
-            )
-            text = text.lower()
-            if "y" in text:
-                returncode, out, err = self.do_popen(
-                    ["kubectl", "delete", "namespace", namespace], interactive=False
+            if  "MLSETUP_NONINTERACTIVE" not in os.environ:
+                logging.warning(f"Namespace {namespace} already exists")
+                text = click.prompt(
+                    "To overwrite the existing namespace press y or Y",
+                    type=str,
+                    default="n",
                 )
-                if returncode != 0:
-                    logging.error(err)
-                    raise SystemExit(returncode)
-            else:
-                create_namespace = False
+                text = text.lower()
+                if "y" in text:
+                    returncode, out, err = self.do_popen(
+                        ["kubectl", "delete", "namespace", namespace], interactive=False
+                    )
+                    if returncode != 0:
+                        logging.error(err)
+                        raise SystemExit(returncode)
+                else:
+                    create_namespace = False
         if create_namespace:
             returncode, out, err = self.do_popen(
                 ["kubectl", "create", "namespace", namespace], interactive=True
@@ -1183,20 +1184,21 @@ class K8sConfig(BaseConfig):
             namespace=namespace, resource="secret", name=pull_secret
         ):
             logging.warning(f"Registry Secret {pull_secret} already exists")
-            text = click.prompt(
-                "To overwrite the existing Registry Secret press y or Y",
-                type=str,
-                default="n",
-            )
-            text = text.lower()
-            if "y" in text:
-                returncode, _, _ = self.do_popen(
-                    ["kubectl", "-n", namespace, "delete", "secret", pull_secret]
+            if  "MLSETUP_NONINTERACTIVE" not in os.environ:
+                text = click.prompt(
+                    "To overwrite the existing Registry Secret press y or Y",
+                    type=str,
+                    default="n",
                 )
-                if returncode != 0:
-                    raise SystemExit(returncode)
-            else:
-                create_secret = False
+                text = text.lower()
+                if "y" in text:
+                    returncode, _, _ = self.do_popen(
+                        ["kubectl", "-n", namespace, "delete", "secret", pull_secret]
+                    )
+                    if returncode != 0:
+                        raise SystemExit(returncode)
+                else:
+                    create_secret = False
         if create_secret:
             returncode, _, _ = self.do_popen(docker_secret_cmd)
             if returncode != 0:
