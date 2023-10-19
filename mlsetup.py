@@ -36,12 +36,13 @@ valid_registry_args = [
     "push_secret",
 ]
 docker_services = ["jupyter", "milvus", "mysql"]
-k8s_services = ["spark", "monitoring", "jupyter", "pipelines"]
+k8s_services = ["spark", "monitoring", "jupyter", "pipelines","mysql"]
 service_map = {
-    "s": "spark-operator",
-    "m": "kube-prometheus-stack",
-    "j": "jupyterNotebook",
-    "p": "pipelines",
+    "spark": "spark-operator",
+    "monitoring": "kube-prometheus-stack",
+    "jupyter": "jupyterNotebook",
+    "pipelines": "pipelines",
+    "mysql":"mysql",
 }
 # auto detect if running inside GitHub Codespaces
 is_codespaces = "CODESPACES" in os.environ and "CODESPACE_NAME" in os.environ
@@ -982,11 +983,13 @@ class K8sConfig(BaseConfig):
 
         # Install and update Helm charts
         helm_commands = [
-            ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"],
-            ["helm", "repo", "list"],
-            ["helm", "repo", "update"],
+            ["helm", "repo", "add", "mlrun-ce", "https://mlrun.github.io/ce"]
         ]
-
+        if "mysql" in options:
+            helm_commands.append(
+                ["helm", "repo", "add", "bitnami", "https://charts.bitnami.com/bitnami"]
+            )
+        helm_commands.extend([["helm", "repo", "list"], ["helm", "repo", "update"]])
         logging.info("Installing and updating mlrun helm repo")
         for command in helm_commands:
             returncode, _, _ = self.do_popen(command)
@@ -1059,7 +1062,25 @@ class K8sConfig(BaseConfig):
             helm_run_cmd += ["--set", opt]
         if chart_ver:
             helm_run_cmd += ["--version", chart_ver]
-
+        if "mysql" in options:
+            helm_sql_install = [
+                "helm",
+                "install",
+                "-n",
+                "mlrun",
+                "my-release",
+                "bitnami/mysql",
+                "--set",
+                "auth.rootPassword=sql123",
+                "--set",
+                "primary.service.ports.mysql=3111",
+                "--set",
+                "auth.database=mlrun_demos",
+            ]
+            logging.info("Running SQL helm install...")
+            returncode, _, _ = self.do_popen(helm_sql_install)
+            if returncode != 0:
+                raise SystemExit(returncode)
         if self.verbose:
             helm_run_cmd += ["--debug"]
         helm_run_cmd += ["mlrun-ce/mlrun-ce"]
@@ -1078,6 +1099,10 @@ class K8sConfig(BaseConfig):
         )
         self.set_env(env_settings)
 
+        if "mysql" in options:
+            print(
+                f"\n* SQL SVC is available at:\nmysql+pymysql://root:sql123@localhost:3111/mlrun_demos\n"
+            )
     @staticmethod
     def parse_services(include, enable):
         extra_sets = []
