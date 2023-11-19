@@ -408,6 +408,7 @@ def remote(url, username, access_key, artifact_path, env_file, env_vars, verbose
     "--simulate", is_flag=True, help="simulate install (print commands vs exec)"
 )
 @click.option("--chart-ver", help="MLRun helm chart version")
+@click.option("--values-file-path", help="values file path")
 @click.option(
     "--jupyter",
     "-j",
@@ -430,6 +431,7 @@ def kubernetes(
     verbose,
     simulate,
     chart_ver,
+    values_file_path,
     jupyter,
 ):
     """Install MLRun service on Kubernetes"""
@@ -447,6 +449,7 @@ def kubernetes(
         options,
         disable,
         chart_ver,
+        values_file_path,
         jupyter,
     )
 
@@ -934,6 +937,7 @@ class K8sConfig(BaseConfig):
         options=None,
         disable=None,
         chart_ver=None,
+        values_file_path=None,
         jupyter="",
         **kwargs,
     ):
@@ -1060,8 +1064,13 @@ class K8sConfig(BaseConfig):
         if chart_ver:
             helm_run_cmd += ["--version", chart_ver]
 
+        if values_file_path:
+            helm_run_cmd += ["-f", values_file_path]
+
         if self.verbose:
             helm_run_cmd += ["--debug"]
+
+
         helm_run_cmd += ["mlrun-ce/mlrun-ce"]
 
         logging.info("Running helm install...")
@@ -1621,3 +1630,4 @@ deployment_modes = {
 
 if __name__ == "__main__":
     main()
+
